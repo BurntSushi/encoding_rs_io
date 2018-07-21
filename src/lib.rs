@@ -4,25 +4,130 @@ TODO
 
 extern crate encoding_rs;
 
-use std::cmp;
 use std::io::{self, Read};
 
 use encoding_rs::{Decoder, Encoding, UTF_8};
 
-/// A reader that transcodes to UTF-8. The source encoding is determined by
+use util::BomPeeker;
+
+mod util;
+
+/// A builder for constructing a byte oriented transcoder to UTF-8.
+pub struct DecodeReaderBytesBuilder {
+    encoding: Option<&'static Encoding>,
+    utf8_passthru: bool,
+}
+
+impl Default for DecodeReaderBytesBuilder {
+    fn default() -> DecodeReaderBytesBuilder {
+        DecodeReaderBytesBuilder::new()
+    }
+}
+
+impl DecodeReaderBytesBuilder {
+    /// Create a new decoder builder with a default configuration.
+    ///
+    /// By default, no explicit encoding is used, but if a UTF-8 or UTF-16
+    /// BOM is detected, then an appropriate encoding is automatically
+    /// detected and transcoding is performed (where invalid sequences map to
+    /// the Unicode replacement codepoint).
+    pub fn new() -> DecodeReaderBytesBuilder {
+        DecodeReaderBytesBuilder {
+            encoding: None,
+            utf8_passthru: false,
+        }
+    }
+
+    /// Build a new decoder that wraps the given reader.
+    pub fn build<R: io::Read>(
+        &self,
+        rdr: R,
+    ) -> DecodeReaderBytes<R, Vec<u8>> {
+        self.build_with_buffer(rdr, Vec::with_capacity(8 * (1<<10)))
+    }
+
+    /// Build a new decoder that wraps the given reader and uses the given
+    /// buffer internally for transcoding.
+    ///
+    /// This is useful for cases where it is advantageuous to amortize
+    /// allocation. Namely, this method permits reusing a buffer for
+    /// subsequent decoders.
+    pub fn build_with_buffer<R: io::Read, B: AsMut<[u8]>>(
+        &self,
+        rdr: R,
+        buffer: B,
+    ) -> DecodeReaderBytes<R, B> {
+        let encoding = self.encoding
+            .map(|enc| enc.new_decoder_with_bom_removal());
+        DecodeReaderBytes {
+            rdr: BomPeeker::new(rdr),
+            buf: buffer,
+            buflen: 0,
+            pos: 0,
+            first: encoding.is_none(),
+            last: false,
+            decoder: encoding,
+            utf8_passthru: self.utf8_passthru,
+        }
+    }
+
+    /// Set an explicit encoding to be used by this decoder.
+    ///
+    /// When an explicit encoding is set, BOM sniffing is disabled and the
+    /// encoding provided will be used unconditionally. Errors in the encoded
+    /// bytes are replaced by the Unicode replacement codepoint.
+    ///
+    /// By default, no explicit encoding is set.
+    pub fn encoding(
+        &mut self,
+        encoding: Option<&'static Encoding>,
+    ) -> &mut DecodeReaderBytesBuilder {
+        self.encoding = encoding;
+        self
+    }
+
+    /// Enable UTF-8 passthru, even when a UTF-8 BOM is observed.
+    ///
+    /// When an explicit encoding is not set (thereby invoking automatic
+    /// encoding detection via BOM sniffing), then a UTF-8 BOM will cause
+    /// UTF-8 transcoding to occur. In particular, if the source contains
+    /// invalid UTF-8 sequences, then they are replaced with the Unicode
+    /// replacement codepoint.
+    ///
+    /// This transcoding may not be desirable. For example, the caller may
+    /// already have its own UTF-8 handling where invalid UTF-8 is
+    /// appropriately handled, in which case, doing an extra transcoding
+    /// step is extra and unnecessary work. Enabling this option will prevent
+    /// that extra transcoding step from occurring. In this case, the bytes
+    /// emitted by the reader are passed through unchanged and the caller will
+    /// be responsible for handling any invalid UTF-8.
+    pub fn utf8_passthru(
+        &mut self,
+        yes: bool,
+    ) -> &mut DecodeReaderBytesBuilder {
+        self.utf8_passthru = yes;
+        self
+    }
+}
+
+/// A reader that transcodes to UTF-8 in a streaming fashion.
+///
+/// When no explicit source encoding is specified (via
+/// `DecodeReaderBytesBuilder`), the source encoding is determined by
 /// inspecting the BOM from the stream read from `R`, if one exists. If a
 /// UTF-16 BOM exists, then the source stream is transcoded to UTF-8 with
 /// invalid UTF-16 sequences translated to the Unicode replacement character.
-/// In all other cases, the underlying reader is passed through unchanged.
+/// Similarly if a UTF-8 BOM is seen. In all other cases, the source of the
+/// underlying reader is passed through unchanged _as if_ it were UTF-8.
+///
+/// Since this particular reader does not guarantee providing valid UTF-8 to
+/// the caller, the caller must be prepared to handle invalid UTF-8 itself.
 ///
 /// `R` is the type of the underlying reader and `B` is the type of an internal
-/// buffer used to store the results of transcoding.
-///
-/// Note that not all methods on `io::Read` work with this implementation.
-/// For example, the `bytes` adapter method attempts to read a single byte at
-/// a time, but this implementation requires a buffer of size at least `4`. If
-/// a buffer of size less than 4 is given, then an error is returned.
-pub struct DecodeReader<R, B> {
+/// buffer used to store the results of transcoding. Callers may elect to reuse
+/// the internal buffer via the `DecodeReaderBytesBuilder::build_with_buffer`
+/// constructor.
+pub struct DecodeReaderBytes<R, B> {
     /// The underlying reader, wrapped in a peeker for reading a BOM if one
     /// exists.
     rdr: BomPeeker<R>,
@@ -47,7 +152,7 @@ pub struct DecodeReader<R, B> {
     utf8_passthru: bool,
 }
 
-impl<R: io::Read, B: AsMut<[u8]>> DecodeReader<R, B> {
+impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
     /// Create a new transcoder that converts a source stream to valid UTF-8.
     ///
     /// If an encoding is specified, then it is used to transcode `rdr` to
@@ -63,17 +168,10 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReader<R, B> {
         rdr: R,
         buf: B,
         enc: Option<&'static Encoding>,
-    ) -> DecodeReader<R, B> {
-        DecodeReader {
-            rdr: BomPeeker::new(rdr),
-            buf: buf,
-            buflen: 0,
-            pos: 0,
-            first: enc.is_none(),
-            last: false,
-            decoder: enc.map(|enc| enc.new_decoder_with_bom_removal()),
-            utf8_passthru: false,
-        }
+    ) -> DecodeReaderBytes<R, B> {
+        DecodeReaderBytesBuilder::new()
+            .encoding(enc)
+            .build_with_buffer(rdr, buf)
     }
 
     /// Fill the internal buffer from the underlying reader.
@@ -83,13 +181,13 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReader<R, B> {
     ///
     /// If the internal buffer is too small to read additional bytes, then an
     /// error is returned.
-    #[inline(always)] // massive perf benefit (???)
     fn fill(&mut self) -> io::Result<()> {
         if self.pos < self.buflen {
             if self.buflen >= self.buf.as_mut().len() {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
-                    "DecodeReader: internal buffer exhausted"));
+                    "DecodeReaderBytes: internal buffer exhausted",
+                ));
             }
             let newlen = self.buflen - self.pos;
             let mut tmp = Vec::with_capacity(newlen);
@@ -100,8 +198,7 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReader<R, B> {
             self.buflen = 0;
         }
         self.pos = 0;
-        self.buflen +=
-            self.rdr.read(&mut self.buf.as_mut()[self.buflen..])?;
+        self.buflen += self.rdr.read(&mut self.buf.as_mut()[self.buflen..])?;
         Ok(())
     }
 
@@ -189,7 +286,7 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReader<R, B> {
     }
 }
 
-impl<R: io::Read, B: AsMut<[u8]>> io::Read for DecodeReader<R, B> {
+impl<R: io::Read, B: AsMut<[u8]>> io::Read for DecodeReaderBytes<R, B> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.first {
             self.first = false;
@@ -206,129 +303,10 @@ impl<R: io::Read, B: AsMut<[u8]>> io::Read for DecodeReader<R, B> {
         if buf.len() < 4 {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                "DecodeReader: byte buffer must have length at least 4"));
+                "DecodeReaderBytes: byte buffer must have length at least 4"));
         }
         self.transcode(buf)
     }
-}
-
-/// `BomPeeker` wraps `R` and satisfies the `io::Read` interface while also
-/// providing a peek at the BOM if one exists. Peeking at the BOM does not
-/// advance the reader.
-struct BomPeeker<R> {
-    rdr: R,
-    bom: Option<PossibleBom>,
-    nread: usize,
-}
-
-impl<R: io::Read> BomPeeker<R> {
-    /// Create a new BomPeeker.
-    ///
-    /// The first three bytes can be read using the `peek_bom` method, but
-    /// will not advance the reader.
-    fn new(rdr: R) -> BomPeeker<R> {
-        BomPeeker { rdr: rdr, bom: None, nread: 0 }
-    }
-
-    /// Peek at the first three bytes of the underlying reader.
-    ///
-    /// This does not advance the reader provided by `BomPeeker`.
-    ///
-    /// If the underlying reader does not have at least two bytes available,
-    /// then `None` is returned.
-    fn peek_bom(&mut self) -> io::Result<PossibleBom> {
-        if let Some(bom) = self.bom {
-            return Ok(bom);
-        }
-        // If the underlying reader fails or panics, make sure we set at least
-        // an empty BOM so that we don't end up here again..
-        self.bom = Some(PossibleBom::new());
-
-        // OK, try to read the BOM.
-        let mut buf = [0u8; 3];
-        let bom_len = read_full(&mut self.rdr, &mut buf)?;
-        self.bom = Some(PossibleBom { bytes: buf, len: bom_len });
-        Ok(self.bom.unwrap())
-    }
-}
-
-impl<R: io::Read> io::Read for BomPeeker<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.nread < 3 {
-            let bom = self.peek_bom()?;
-            let bom = bom.as_slice();
-            if self.nread < bom.len() {
-                let rest = &bom[self.nread..];
-                let len = cmp::min(buf.len(), rest.len());
-                buf[..len].copy_from_slice(&rest[..len]);
-                self.nread += len;
-                return Ok(len);
-            }
-        }
-        let nread = self.rdr.read(buf)?;
-        self.nread += nread;
-        Ok(nread)
-    }
-}
-
-/// A PossibleBom is a sequence of bytes at the beginning of a stream that
-/// may represent an actual BOM. To detect the BOM, this must contain at
-/// least 3 bytes.
-///
-/// If this is a valid UTF-8 or UTF-16 BOM, then an encoding_rs decoder can
-/// be built from the BOM.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PossibleBom {
-    bytes: [u8; 3],
-    len: usize,
-}
-
-impl PossibleBom {
-    /// Build a new empty BOM.
-    fn new() -> PossibleBom {
-        PossibleBom { bytes: [0; 3], len: 0 }
-    }
-
-    /// Return the BOM as a normal slice.
-    fn as_slice(&self) -> &[u8] {
-        &self.bytes[0..self.len]
-    }
-
-    /// If this is a valid UTF-8 or UTF-16 BOM, return its corresponding
-    /// encoding. Otherwise, return `None`.
-    fn encoding(&self) -> Option<&'static Encoding> {
-        let bom = self.as_slice();
-        if bom.len() < 3 {
-            return None;
-        }
-        if let Some((enc, _)) = Encoding::for_bom(bom) {
-            return Some(enc);
-        }
-        None
-    }
-}
-
-/// Like `io::Read::read_exact`, except it never returns `UnexpectedEof` and
-/// instead returns the number of bytes read if EOF is seen before filling
-/// `buf`.
-fn read_full<R: io::Read>(
-    mut rdr: R,
-    mut buf: &mut [u8],
-) -> io::Result<usize> {
-    let mut nread = 0;
-    while !buf.is_empty() {
-        match rdr.read(buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                nread += n;
-                let tmp = buf;
-                buf = &mut tmp[n..];
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(nread)
 }
 
 #[cfg(test)]
@@ -337,103 +315,12 @@ mod tests {
 
     use encoding_rs::Encoding;
 
-    use super::{PossibleBom, BomPeeker, DecodeReader};
+    use super::{DecodeReaderBytes, DecodeReaderBytesBuilder};
 
     fn read_to_string<R: Read>(mut rdr: R) -> String {
         let mut s = String::new();
         rdr.read_to_string(&mut s).unwrap();
         s
-    }
-
-    #[test]
-    fn peeker_empty() {
-        let buf = [];
-        let mut peeker = BomPeeker::new(&buf[..]);
-        assert_eq!(PossibleBom::new(), peeker.peek_bom().unwrap());
-
-        let mut tmp = [0; 100];
-        assert_eq!(0, peeker.read(&mut tmp).unwrap());
-    }
-
-    #[test]
-    fn peeker_one() {
-        let buf = [1];
-        let mut peeker = BomPeeker::new(&buf[..]);
-        assert_eq!(
-            PossibleBom { bytes: [1, 0, 0], len: 1},
-            peeker.peek_bom().unwrap());
-
-        let mut tmp = [0; 100];
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(1, tmp[0]);
-        assert_eq!(0, peeker.read(&mut tmp).unwrap());
-    }
-
-    #[test]
-    fn peeker_two() {
-        let buf = [1, 2];
-        let mut peeker = BomPeeker::new(&buf[..]);
-        assert_eq!(
-            PossibleBom { bytes: [1, 2, 0], len: 2},
-            peeker.peek_bom().unwrap());
-
-        let mut tmp = [0; 100];
-        assert_eq!(2, peeker.read(&mut tmp).unwrap());
-        assert_eq!(1, tmp[0]);
-        assert_eq!(2, tmp[1]);
-        assert_eq!(0, peeker.read(&mut tmp).unwrap());
-    }
-
-    #[test]
-    fn peeker_three() {
-        let buf = [1, 2, 3];
-        let mut peeker = BomPeeker::new(&buf[..]);
-        assert_eq!(
-            PossibleBom { bytes: [1, 2, 3], len: 3},
-            peeker.peek_bom().unwrap());
-
-        let mut tmp = [0; 100];
-        assert_eq!(3, peeker.read(&mut tmp).unwrap());
-        assert_eq!(1, tmp[0]);
-        assert_eq!(2, tmp[1]);
-        assert_eq!(3, tmp[2]);
-        assert_eq!(0, peeker.read(&mut tmp).unwrap());
-    }
-
-    #[test]
-    fn peeker_four() {
-        let buf = [1, 2, 3, 4];
-        let mut peeker = BomPeeker::new(&buf[..]);
-        assert_eq!(
-            PossibleBom { bytes: [1, 2, 3], len: 3},
-            peeker.peek_bom().unwrap());
-
-        let mut tmp = [0; 100];
-        assert_eq!(3, peeker.read(&mut tmp).unwrap());
-        assert_eq!(1, tmp[0]);
-        assert_eq!(2, tmp[1]);
-        assert_eq!(3, tmp[2]);
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(4, tmp[0]);
-        assert_eq!(0, peeker.read(&mut tmp).unwrap());
-    }
-
-    #[test]
-    fn peeker_one_at_a_time() {
-        let buf = [1, 2, 3, 4];
-        let mut peeker = BomPeeker::new(&buf[..]);
-
-        let mut tmp = [0; 1];
-        assert_eq!(0, peeker.read(&mut tmp[..0]).unwrap());
-        assert_eq!(0, tmp[0]);
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(1, tmp[0]);
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(2, tmp[0]);
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(3, tmp[0]);
-        assert_eq!(1, peeker.read(&mut tmp).unwrap());
-        assert_eq!(4, tmp[0]);
     }
 
     // In cases where all we have is a bom, we expect the bytes to be
@@ -442,32 +329,37 @@ mod tests {
     fn trans_utf16_bom() {
         let srcbuf = vec![0xFF, 0xFE];
         let mut dstbuf = vec![0; 8 * (1<<10)];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         let n = rdr.read(&mut dstbuf).unwrap();
         assert_eq!(&*srcbuf, &dstbuf[..n]);
 
         let srcbuf = vec![0xFE, 0xFF];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         let n = rdr.read(&mut dstbuf).unwrap();
         assert_eq!(&*srcbuf, &dstbuf[..n]);
 
-        // TODO: Switch up this test depending on UTF-8 passthru option.
         let srcbuf = vec![0xEF, 0xBB, 0xBF];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         let n = rdr.read(&mut dstbuf).unwrap();
-        // assert_eq!(&*srcbuf, &dstbuf[..n]);
         assert_eq!(n, 0);
+
+        let srcbuf = vec![0xEF, 0xBB, 0xBF];
+        let mut rdr = DecodeReaderBytesBuilder::new()
+            .utf8_passthru(true)
+            .build(&*srcbuf);
+        let n = rdr.read(&mut dstbuf).unwrap();
+        assert_eq!(&*srcbuf, &dstbuf[..n]);
     }
 
     // Test basic UTF-16 decoding.
     #[test]
     fn trans_utf16_basic() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         assert_eq!("a", read_to_string(&mut rdr));
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         assert_eq!("a", read_to_string(&mut rdr));
     }
 
@@ -476,7 +368,7 @@ mod tests {
     #[test]
     fn trans_utf16_incomplete() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00, 0x00];
-        let mut rdr = DecodeReader::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
+        let mut rdr = DecodeReaderBytes::new(&*srcbuf, vec![0; 8 * (1<<10)], None);
         assert_eq!("a\u{FFFD}", read_to_string(&mut rdr));
     }
 
@@ -486,7 +378,7 @@ mod tests {
             fn $name() {
                 let srcbuf = &$srcbytes[..];
                 let enc = Encoding::for_label($enc.as_bytes());
-                let mut rdr = DecodeReader::new(
+                let mut rdr = DecodeReaderBytes::new(
                     &*srcbuf, vec![0; 8 * (1<<10)], enc);
                 assert_eq!($dst, read_to_string(&mut rdr));
             }
