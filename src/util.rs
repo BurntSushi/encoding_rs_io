@@ -1,7 +1,7 @@
 use std::cmp;
 use std::io;
 
-use encoding_rs::{Decoder, Encoding};
+use encoding_rs::{CoderResult, Decoder, Encoding};
 
 /// A tiny transcoder performs transcoding incrementally even when a caller
 /// provided buffer is not large enough.
@@ -18,6 +18,7 @@ use encoding_rs::{Decoder, Encoding};
 /// buffer for these cases, but we instead opt to handle this without
 /// allocation under the assumption that tiny caller provided buffers are
 /// probably a pathological case.
+#[derive(Clone, Debug)]
 pub struct TinyTranscoder {
     /// This is where we store the results of a transcoding. Since we are
     /// always decoding to UTF-8, 4 bytes is sufficient to represent any
@@ -63,16 +64,18 @@ impl TinyTranscoder {
         assert!(self.as_slice().is_empty(), "transcoder has unconsumed bytes");
         if last {
             assert!(src.is_empty(), "src must be empty when last==true");
-        } else {
-            assert!(!src.is_empty(), "src must be non-empty when last==false");
         }
-        let (_, nin, nout, _) = decoder.decode_to_utf8(
+        let (res, nin, nout, _) = decoder.decode_to_utf8(
             src,
             &mut self.partial[..],
             last,
         );
-        if !last {
-            assert!(nin > 0, "expected decoder to consume something");
+        if last {
+            assert_eq!(
+                res,
+                CoderResult::InputEmpty,
+                "input should be exhausted",
+            );
         }
         self.pos = 0;
         self.len = nout;
@@ -103,6 +106,7 @@ impl io::Read for TinyTranscoder {
 /// `BomPeeker` wraps `R` and satisfies the `io::Read` interface while also
 /// providing a peek at the BOM if one exists. Peeking at the BOM does not
 /// advance the reader.
+#[derive(Debug)]
 pub struct BomPeeker<R> {
     rdr: R,
     bom: Option<PossibleBom>,
@@ -265,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn tiny_utf16_invalid1() {
+    fn tiny_utf16_invalid() {
         let enc = Encoding::for_label(b"utf-16le").unwrap();
         let mut dec = enc.new_decoder_with_bom_removal();
         let mut bytes = &b"\x00"[..];
