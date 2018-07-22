@@ -447,7 +447,7 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
             // buffer be at least 4 bytes big.
             assert!(
                 self.buflen < self.buf.as_mut().len(),
-                "internal buffer should never be exhausted",
+                "internal buffer should never be exhausted"
             );
             let buf = self.buf.as_mut();
             for (dst, src) in (self.pos..self.buflen).enumerate() {
