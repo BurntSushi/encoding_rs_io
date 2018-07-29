@@ -8,7 +8,7 @@ homepage = "https://github.com/BurntSushi/encoding_rs_io"
 repository = "https://github.com/BurntSushi/encoding_rs_io"
 readme = "README.md"
 keywords = ["encoding", "transcoding", "stream", "io", "read"]
-license = "MIT OR Apache-2.0"
+license = "MIT OR Unlicense"
 categories = ["text-processing", "encoding", "web-programming", "email"]
 
 [badges]
