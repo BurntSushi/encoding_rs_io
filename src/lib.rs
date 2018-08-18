@@ -104,6 +104,7 @@ mod util;
 pub struct DecodeReaderBytesBuilder {
     encoding: Option<&'static Encoding>,
     utf8_passthru: bool,
+    bom_override: bool,
 }
 
 impl Default for DecodeReaderBytesBuilder {
@@ -123,6 +124,7 @@ impl DecodeReaderBytesBuilder {
         DecodeReaderBytesBuilder {
             encoding: None,
             utf8_passthru: false,
+            bom_override: false,
         }
     }
 
@@ -158,7 +160,7 @@ impl DecodeReaderBytesBuilder {
         let encoding = self.encoding
             .map(|enc| enc.new_decoder_with_bom_removal());
         // No need to do BOM detection if we have an explicit encoding.
-        let has_detected = encoding.is_some();
+        let has_detected = !self.bom_override && encoding.is_some();
         Ok(DecodeReaderBytes {
             rdr: BomPeeker::new(rdr),
             decoder: encoding,
@@ -237,6 +239,19 @@ impl DecodeReaderBytesBuilder {
         yes: bool,
     ) -> &mut DecodeReaderBytesBuilder {
         self.utf8_passthru = yes;
+        self
+    }
+
+    /// Give the highest precedent to the BOM, if one is found.
+    ///
+    /// When this is enabled, and if a BOM is found, then the encoding
+    /// indicated by that BOM is used even if an explicit encoding has been
+    /// set via the `encoding` method.
+    pub fn bom_override(
+        &mut self,
+        yes: bool,
+    ) -> &mut DecodeReaderBytesBuilder {
+        self.bom_override = yes;
         self
     }
 }
@@ -493,7 +508,7 @@ impl<R: fmt::Debug, B: fmt::Debug> fmt::Debug for DecodeReaderBytes<R, B> {
 mod tests {
     use std::io::Read;
 
-    use encoding_rs::Encoding;
+    use encoding_rs::{self, Encoding};
 
     use super::{DecodeReaderBytes, DecodeReaderBytesBuilder};
 
@@ -540,6 +555,17 @@ mod tests {
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
+        assert_eq!("a", read_to_string(&mut rdr));
+    }
+
+    // Test the BOM override.
+    #[test]
+    fn trans_utf16_bom_override() {
+        let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
+        let mut rdr = DecodeReaderBytesBuilder::new()
+            .bom_override(true)
+            .encoding(Some(encoding_rs::UTF_8))
+            .build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
     }
 
