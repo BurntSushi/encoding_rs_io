@@ -3,6 +3,10 @@ use std::io;
 
 use encoding_rs::{CoderResult, Decoder, Encoding};
 
+/// This is the minimum amount of space that a decoder-to-utf8-with-replacement
+/// will use for any state and any input.
+const TINY_BUFFER_SIZE: usize = 7;
+
 /// A tiny transcoder performs transcoding incrementally even when a caller
 /// provided buffer is not large enough.
 ///
@@ -21,9 +25,9 @@ use encoding_rs::{CoderResult, Decoder, Encoding};
 #[derive(Clone, Debug)]
 pub struct TinyTranscoder {
     /// This is where we store the results of a transcoding. Since we are
-    /// always decoding to UTF-8, 4 bytes is sufficient to represent any
+    /// always decoding to UTF-8, 7 bytes is sufficient to represent any
     /// codepoint.
-    partial: [u8; 4],
+    partial: [u8; TINY_BUFFER_SIZE],
     /// The number of bytes written in `partial`.
     len: usize,
     /// The position in `partial` at which the next byte should be read.
@@ -34,7 +38,7 @@ impl TinyTranscoder {
     /// Create a new tiny transcoder that is ready for use.
     pub fn new() -> TinyTranscoder {
         TinyTranscoder {
-            partial: [0; 4],
+            partial: [0; TINY_BUFFER_SIZE],
             len: 0,
             pos: 0,
         }
@@ -233,13 +237,13 @@ mod tests {
     fn tiny_utf16_normal() {
         let enc = Encoding::for_label(b"utf-16le").unwrap();
         let mut dec = enc.new_decoder_with_bom_removal();
-        let mut bytes = &b"f\x00o\x00o\x00b\x00a\x00r\x00"[..];
+        let mut bytes = &b"f\x00o\x00o\x00b\x00a\x00r\x00b\x00a\x00z\x00"[..];
         let mut tiny = TinyTranscoder::new();
         let mut tmp = [0u8; 1];
 
         let (nin, nout) = tiny.transcode(&mut dec, bytes, false);
-        assert_eq!(nin, 8);
-        assert_eq!(nout, 4);
+        assert_eq!(nin, 14);
+        assert_eq!(nout, 7);
         bytes = &bytes[nin..];
 
         assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
@@ -248,6 +252,12 @@ mod tests {
         assert_eq!(tmp, [b'o'; 1]);
         assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
         assert_eq!(tmp, [b'o'; 1]);
+        assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
+        assert_eq!(tmp, [b'b'; 1]);
+        assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
+        assert_eq!(tmp, [b'a'; 1]);
+        assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
+        assert_eq!(tmp, [b'r'; 1]);
         assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
         assert_eq!(tmp, [b'b'; 1]);
 
@@ -259,7 +269,7 @@ mod tests {
         assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
         assert_eq!(tmp, [b'a'; 1]);
         assert_eq!(tiny.read(&mut tmp).unwrap(), 1);
-        assert_eq!(tmp, [b'r'; 1]);
+        assert_eq!(tmp, [b'z'; 1]);
 
         let (nin, nout) = tiny.transcode(&mut dec, bytes, true);
         assert_eq!(nin, 0);
