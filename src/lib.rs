@@ -105,6 +105,7 @@ pub struct DecodeReaderBytesBuilder {
     encoding: Option<&'static Encoding>,
     utf8_passthru: bool,
     bom_override: bool,
+    strip_bom: bool,
 }
 
 impl Default for DecodeReaderBytesBuilder {
@@ -125,6 +126,7 @@ impl DecodeReaderBytesBuilder {
             encoding: None,
             utf8_passthru: false,
             bom_override: false,
+            strip_bom: false,
         }
     }
 
@@ -161,8 +163,16 @@ impl DecodeReaderBytesBuilder {
             .map(|enc| enc.new_decoder_with_bom_removal());
         // No need to do BOM detection if we have an explicit encoding.
         let has_detected = !self.bom_override && encoding.is_some();
+        let peeker =
+            if self.utf8_passthru && self.strip_bom {
+                // We only need to do this when utf8_passthru is enabled
+                // because we otherwise setup encoding_rs to strip the BOM.
+                BomPeeker::without_bom(rdr)
+            } else {
+                BomPeeker::with_bom(rdr)
+            };
         Ok(DecodeReaderBytes {
-            rdr: BomPeeker::new(rdr),
+            rdr: peeker,
             decoder: encoding,
             tiny: TinyTranscoder::new(),
             utf8_passthru: self.utf8_passthru,
@@ -242,11 +252,59 @@ impl DecodeReaderBytesBuilder {
         self
     }
 
+    /// Whether or not to always strip a BOM if one is found.
+    ///
+    /// When this is enabled, if a BOM is found at the beginning of a stream,
+    /// then it is ignored. This applies even when `utf8_passthru` is enabled.
+    ///
+    /// This is disabled by default.
+    ///
+    /// # Example
+    ///
+    /// This example shows how to remove the BOM if it's present even when
+    /// `utf8_passthru` is enabled.
+    ///
+    /// ```
+    /// extern crate encoding_rs;
+    /// extern crate encoding_rs_io;
+    ///
+    /// use std::error::Error;
+    /// use std::io::Read;
+    ///
+    /// use encoding_rs_io::DecodeReaderBytesBuilder;
+    ///
+    /// # fn main() { example().unwrap(); }
+    /// fn example() -> Result<(), Box<Error>> {
+    ///     let source_data = &b"\xEF\xBB\xBFfoo\xFFbar"[..];
+    ///     let mut decoder = DecodeReaderBytesBuilder::new()
+    ///         .utf8_passthru(true)
+    ///         .strip_bom(true)
+    ///         .build(source_data);
+    ///
+    ///     let mut dest = vec![];
+    ///     decoder.read_to_end(&mut dest)?;
+    ///     // If `strip_bom` wasn't enabled, then this would include the BOM.
+    ///     assert_eq!(dest, b"foo\xFFbar");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn strip_bom(
+        &mut self,
+        yes: bool,
+    ) -> &mut DecodeReaderBytesBuilder {
+        self.strip_bom = yes;
+        self
+    }
+
     /// Give the highest precedent to the BOM, if one is found.
     ///
     /// When this is enabled, and if a BOM is found, then the encoding
     /// indicated by that BOM is used even if an explicit encoding has been
     /// set via the `encoding` method.
+    ///
+    /// This does not override `utf8_passthru`.
+    ///
+    /// This is disabled by default.
     pub fn bom_override(
         &mut self,
         yes: bool,
@@ -555,6 +613,21 @@ mod tests {
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
+        assert_eq!("a", read_to_string(&mut rdr));
+    }
+
+    #[test]
+    fn trans_utf16_basic_without_bom() {
+        let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
+        let mut rdr = DecodeReaderBytesBuilder::new()
+            .strip_bom(true)
+            .build(&*srcbuf);
+        assert_eq!("a", read_to_string(&mut rdr));
+
+        let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
+        let mut rdr = DecodeReaderBytesBuilder::new()
+            .strip_bom(true)
+            .build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
     }
 

@@ -113,17 +113,23 @@ impl io::Read for TinyTranscoder {
 #[derive(Debug)]
 pub struct BomPeeker<R> {
     rdr: R,
+    strip: bool,
     bom: Option<PossibleBom>,
     nread: usize,
 }
 
 impl<R: io::Read> BomPeeker<R> {
-    /// Create a new BomPeeker.
+    /// Create a new BomPeeker that includes the BOM in calls to `read`.
     ///
     /// The first three bytes can be read using the `peek_bom` method, but
     /// will not advance the reader.
-    pub fn new(rdr: R) -> BomPeeker<R> {
-        BomPeeker { rdr: rdr, bom: None, nread: 0 }
+    pub fn with_bom(rdr: R) -> BomPeeker<R> {
+        BomPeeker { rdr: rdr, strip: false, bom: None, nread: 0 }
+    }
+
+    /// Create a new BomPeeker that never includes the BOM in calls to `read`.
+    pub fn without_bom(rdr: R) -> BomPeeker<R> {
+        BomPeeker { rdr: rdr, strip: true, bom: None, nread: 0 }
     }
 
     /// Peek at the first three bytes of the underlying reader.
@@ -152,7 +158,11 @@ impl<R: io::Read> io::Read for BomPeeker<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.nread < 3 {
             let bom = self.peek_bom()?;
-            let bom = bom.as_slice();
+
+            // If we don't have a valid BOM (e.g., no encoding for it), then
+            // we always pass through the first 3 bytes. Otherwise, if we have
+            // a valid BOM, we only pass it thru if we don't want to strip it.
+            let bom = bom.as_slice(!self.strip);
             if self.nread < bom.len() {
                 let rest = &bom[self.nread..];
                 let len = cmp::min(buf.len(), rest.len());
@@ -186,14 +196,26 @@ impl PossibleBom {
     }
 
     /// Return the BOM as a normal slice.
-    fn as_slice(&self) -> &[u8] {
-        &self.bytes[0..self.len]
+    ///
+    /// If `bom` is true, then this includes any leading BOM bytes. Otherwise,
+    /// this only includes non-BOM bytes.
+    fn as_slice(&self, bom: bool) -> &[u8] {
+        let slice = &self.bytes[0..self.len];
+        if bom || slice.len() <= 1 {
+            slice
+        } else if &slice[0..2] == b"\xFF\xFE" || &slice[0..2] == b"\xFE\xFF" {
+            &slice[2..]
+        } else if slice == b"\xEF\xBB\xBF" {
+            &[]
+        } else {
+            slice
+        }
     }
 
     /// If this is a valid UTF-8 or UTF-16 BOM, return its corresponding
     /// encoding. Otherwise, return `None`.
     pub fn encoding(&self) -> Option<&'static Encoding> {
-        let bom = self.as_slice();
+        let bom = self.as_slice(true);
         if bom.len() < 3 {
             return None;
         }
@@ -308,7 +330,7 @@ mod tests {
     #[test]
     fn peeker_empty() {
         let buf = [];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(PossibleBom::new(), peeker.peek_bom().unwrap());
 
         let mut tmp = [0; 100];
@@ -318,7 +340,7 @@ mod tests {
     #[test]
     fn peeker_one() {
         let buf = [1];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
             PossibleBom { bytes: [1, 0, 0], len: 1},
             peeker.peek_bom().unwrap());
@@ -332,7 +354,7 @@ mod tests {
     #[test]
     fn peeker_two() {
         let buf = [1, 2];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
             PossibleBom { bytes: [1, 2, 0], len: 2},
             peeker.peek_bom().unwrap());
@@ -347,7 +369,7 @@ mod tests {
     #[test]
     fn peeker_three() {
         let buf = [1, 2, 3];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
             PossibleBom { bytes: [1, 2, 3], len: 3},
             peeker.peek_bom().unwrap());
@@ -363,7 +385,7 @@ mod tests {
     #[test]
     fn peeker_four() {
         let buf = [1, 2, 3, 4];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
             PossibleBom { bytes: [1, 2, 3], len: 3},
             peeker.peek_bom().unwrap());
@@ -381,7 +403,7 @@ mod tests {
     #[test]
     fn peeker_one_at_a_time() {
         let buf = [1, 2, 3, 4];
-        let mut peeker = BomPeeker::new(&buf[..]);
+        let mut peeker = BomPeeker::with_bom(&buf[..]);
 
         let mut tmp = [0; 1];
         assert_eq!(0, peeker.read(&mut tmp[..0]).unwrap());
@@ -394,5 +416,37 @@ mod tests {
         assert_eq!(3, tmp[0]);
         assert_eq!(1, peeker.read(&mut tmp).unwrap());
         assert_eq!(4, tmp[0]);
+    }
+
+    #[test]
+    fn peeker_without_bom() {
+        let buf = [b'\xEF', b'\xBB', b'\xBF', b'a'];
+        let mut peeker = BomPeeker::without_bom(&buf[..]);
+        assert_eq!(
+            PossibleBom { bytes: [b'\xEF', b'\xBB', b'\xBF'], len: 3},
+            peeker.peek_bom().unwrap());
+
+        let mut tmp = [0; 100];
+        assert_eq!(1, peeker.read(&mut tmp).unwrap());
+        assert_eq!(b'a', tmp[0]);
+        assert_eq!(0, peeker.read(&mut tmp).unwrap());
+    }
+
+    #[test]
+    fn peeker_without_bom_nobom() {
+        let buf = [1, 2, 3, 4];
+        let mut peeker = BomPeeker::without_bom(&buf[..]);
+        assert_eq!(
+            PossibleBom { bytes: [1, 2, 3], len: 3},
+            peeker.peek_bom().unwrap());
+
+        let mut tmp = [0; 100];
+        assert_eq!(3, peeker.read(&mut tmp).unwrap());
+        assert_eq!(1, tmp[0]);
+        assert_eq!(2, tmp[1]);
+        assert_eq!(3, tmp[2]);
+        assert_eq!(1, peeker.read(&mut tmp).unwrap());
+        assert_eq!(4, tmp[0]);
+        assert_eq!(0, peeker.read(&mut tmp).unwrap());
     }
 }
