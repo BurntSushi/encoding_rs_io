@@ -106,6 +106,7 @@ pub struct DecodeReaderBytesBuilder {
     utf8_passthru: bool,
     bom_override: bool,
     strip_bom: bool,
+    bom_sniffing: bool,
 }
 
 impl Default for DecodeReaderBytesBuilder {
@@ -127,6 +128,7 @@ impl DecodeReaderBytesBuilder {
             utf8_passthru: false,
             bom_override: false,
             strip_bom: false,
+            bom_sniffing: true,
         }
     }
 
@@ -161,8 +163,12 @@ impl DecodeReaderBytesBuilder {
         }
         let encoding = self.encoding
             .map(|enc| enc.new_decoder_with_bom_removal());
-        // No need to do BOM detection if we have an explicit encoding.
-        let has_detected = !self.bom_override && encoding.is_some();
+
+        // No need to do BOM detection if we opt out of it or have an explicit
+        // encoding.
+        let has_detected =
+            !self.bom_sniffing || (!self.bom_override && encoding.is_some());
+
         let peeker =
             if self.utf8_passthru && self.strip_bom {
                 // We only need to do this when utf8_passthru is enabled
@@ -310,6 +316,24 @@ impl DecodeReaderBytesBuilder {
         yes: bool,
     ) -> &mut DecodeReaderBytesBuilder {
         self.bom_override = yes;
+        self
+    }
+
+    /// Enable BOM sniffing
+    ///
+    /// When this is enabled and an explicit encoding is not set, the decoder
+    /// will try to detect the encoding with BOM.
+    ///
+    /// When this is disabled and an explicit encoding is not set, the decoder
+    /// will treat the input as raw bytes. The bytes will be passed through
+    /// unchanged, including any BOM that may be present.
+    ///
+    /// This is enabled by default.
+    pub fn bom_sniffing(
+        &mut self,
+        yes: bool,
+    ) -> &mut DecodeReaderBytesBuilder {
+        self.bom_sniffing = yes;
         self
     }
 }
@@ -737,6 +761,33 @@ mod tests {
         let rdr = DecodeReaderBytes::new(&*srcbuf);
         let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
         assert_eq!(got, b"abcdefgh");
+    }
+
+    #[test]
+    fn trans_utf16_no_sniffing() {
+        let srcbuf = vec![
+            0xFF, 0xFE,
+            0x61, 0x00,
+        ];
+        let rdr = DecodeReaderBytesBuilder::new()
+            .bom_sniffing(false)
+            .build(&*srcbuf);
+        let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
+        assert_eq!(got, srcbuf);
+    }
+
+    #[test]
+    fn trans_utf16_no_sniffing_encoding_override() {
+        let srcbuf = vec![
+            0xFF, 0xFE,
+            0x61, 0x00,
+        ];
+        let rdr = DecodeReaderBytesBuilder::new()
+            .bom_sniffing(false)
+            .encoding(Some(encoding_rs::UTF_16LE))
+            .build(&*srcbuf);
+        let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
+        assert_eq!(got, b"a");
     }
 
     // Test transcoding with a minimal buffer using byte oriented APIs.
