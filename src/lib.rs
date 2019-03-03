@@ -164,8 +164,11 @@ impl DecodeReaderBytesBuilder {
         let encoding = self.encoding
             .map(|enc| enc.new_decoder_with_bom_removal());
 
-        // No need to do BOM detection if we opt out of it or have an explicit encoding.
-        let has_detected = !self.bom_sniffing || (!self.bom_override && encoding.is_some());
+        // No need to do BOM detection if we opt out of it or have an explicit
+        // encoding.
+        let has_detected =
+            !self.bom_sniffing || (!self.bom_override && encoding.is_some());
+
         let peeker =
             if self.utf8_passthru && self.strip_bom {
                 // We only need to do this when utf8_passthru is enabled
@@ -318,12 +321,12 @@ impl DecodeReaderBytesBuilder {
 
     /// Enable BOM sniffing
     ///
-    /// When this is enabled and an explicit encoding is not set, the decoder will try to detect
-    /// the encoding with BOM.
+    /// When this is enabled and an explicit encoding is not set, the decoder
+    /// will try to detect the encoding with BOM.
     ///
-    /// When this is disabled and an explicit encoding is not set, the decoder will treat the input
-    /// as raw bytes. The bytes will be passed through unchanged, including any BOM that may be
-    /// present.
+    /// When this is disabled and an explicit encoding is not set, the decoder
+    /// will treat the input as raw bytes. The bytes will be passed through
+    /// unchanged, including any BOM that may be present.
     ///
     /// This is enabled by default.
     pub fn bom_sniffing(
