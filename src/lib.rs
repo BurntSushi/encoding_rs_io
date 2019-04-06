@@ -170,9 +170,7 @@ impl DecodeReaderBytesBuilder {
             !self.bom_sniffing || (!self.bom_override && encoding.is_some());
 
         let peeker =
-            if self.utf8_passthru && self.strip_bom {
-                // We only need to do this when utf8_passthru is enabled
-                // because we otherwise setup encoding_rs to strip the BOM.
+            if self.strip_bom {
                 BomPeeker::without_bom(rdr)
             } else {
                 BomPeeker::with_bom(rdr)
@@ -261,7 +259,8 @@ impl DecodeReaderBytesBuilder {
     /// Whether or not to always strip a BOM if one is found.
     ///
     /// When this is enabled, if a BOM is found at the beginning of a stream,
-    /// then it is ignored. This applies even when `utf8_passthru` is enabled.
+    /// then it is ignored. This applies even when `utf8_passthru` is enabled
+    /// or if `bom_sniffing` is disabled.
     ///
     /// This is disabled by default.
     ///
@@ -777,6 +776,20 @@ mod tests {
     }
 
     #[test]
+    fn trans_utf16_no_sniffing_strip_bom() {
+        let srcbuf = vec![
+            0xFF, 0xFE,
+            0x61, 0x00,
+        ];
+        let rdr = DecodeReaderBytesBuilder::new()
+            .bom_sniffing(false)
+            .strip_bom(true)
+            .build(&*srcbuf);
+        let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
+        assert_eq!(got, &[0x61, 0x00]);
+    }
+
+    #[test]
     fn trans_utf16_no_sniffing_encoding_override() {
         let srcbuf = vec![
             0xFF, 0xFE,
@@ -784,6 +797,21 @@ mod tests {
         ];
         let rdr = DecodeReaderBytesBuilder::new()
             .bom_sniffing(false)
+            .encoding(Some(encoding_rs::UTF_16LE))
+            .build(&*srcbuf);
+        let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
+        assert_eq!(got, b"a");
+    }
+
+    #[test]
+    fn trans_utf16_no_sniffing_encoding_override_strip_bom() {
+        let srcbuf = vec![
+            0xFF, 0xFE,
+            0x61, 0x00,
+        ];
+        let rdr = DecodeReaderBytesBuilder::new()
+            .bom_sniffing(false)
+            .strip_bom(true)
             .encoding(Some(encoding_rs::UTF_16LE))
             .build(&*srcbuf);
         let got: Vec<u8> = rdr.bytes().map(|res| res.unwrap()).collect();
