@@ -37,11 +37,7 @@ pub struct TinyTranscoder {
 impl TinyTranscoder {
     /// Create a new tiny transcoder that is ready for use.
     pub fn new() -> TinyTranscoder {
-        TinyTranscoder {
-            partial: [0; TINY_BUFFER_SIZE],
-            len: 0,
-            pos: 0,
-        }
+        TinyTranscoder { partial: [0; TINY_BUFFER_SIZE], len: 0, pos: 0 }
     }
 
     /// Transcode the contents of `src` into this buffer using the provided
@@ -69,11 +65,8 @@ impl TinyTranscoder {
         if last {
             assert!(src.is_empty(), "src must be empty when last==true");
         }
-        let (res, nin, nout, _) = decoder.decode_to_utf8(
-            src,
-            &mut self.partial[..],
-            last,
-        );
+        let (res, nin, nout, _) =
+            decoder.decode_to_utf8(src, &mut self.partial[..], last);
         if last {
             assert_eq!(
                 res,
@@ -251,9 +244,9 @@ pub fn read_full<R: io::Read>(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use super::{BomPeeker, PossibleBom, TinyTranscoder};
     use encoding_rs::Encoding;
-    use super::{PossibleBom, BomPeeker, TinyTranscoder};
+    use std::io::Read;
 
     #[test]
     fn tiny_utf16_normal() {
@@ -342,8 +335,9 @@ mod tests {
         let buf = [1];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [1, 0, 0], len: 1},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [1, 0, 0], len: 1 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(1, peeker.read(&mut tmp).unwrap());
@@ -356,8 +350,9 @@ mod tests {
         let buf = [1, 2];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [1, 2, 0], len: 2},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [1, 2, 0], len: 2 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(2, peeker.read(&mut tmp).unwrap());
@@ -371,8 +366,9 @@ mod tests {
         let buf = [1, 2, 3];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [1, 2, 3], len: 3},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [1, 2, 3], len: 3 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(3, peeker.read(&mut tmp).unwrap());
@@ -387,8 +383,9 @@ mod tests {
         let buf = [1, 2, 3, 4];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [1, 2, 3], len: 3},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [1, 2, 3], len: 3 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(3, peeker.read(&mut tmp).unwrap());
@@ -423,8 +420,9 @@ mod tests {
         let buf = [b'\xEF', b'\xBB', b'\xBF', b'a'];
         let mut peeker = BomPeeker::without_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [b'\xEF', b'\xBB', b'\xBF'], len: 3},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [b'\xEF', b'\xBB', b'\xBF'], len: 3 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(1, peeker.read(&mut tmp).unwrap());
@@ -437,8 +435,9 @@ mod tests {
         let buf = [1, 2, 3, 4];
         let mut peeker = BomPeeker::without_bom(&buf[..]);
         assert_eq!(
-            PossibleBom { bytes: [1, 2, 3], len: 3},
-            peeker.peek_bom().unwrap());
+            PossibleBom { bytes: [1, 2, 3], len: 3 },
+            peeker.peek_bom().unwrap()
+        );
 
         let mut tmp = [0; 100];
         assert_eq!(3, peeker.read(&mut tmp).unwrap());
