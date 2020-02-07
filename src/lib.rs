@@ -133,11 +133,8 @@ impl DecodeReaderBytesBuilder {
     }
 
     /// Build a new decoder that wraps the given reader.
-    pub fn build<R: io::Read>(
-        &self,
-        rdr: R,
-    ) -> DecodeReaderBytes<R, Vec<u8>> {
-        self.build_with_buffer(rdr, vec![0; 8 * (1<<10)]).unwrap()
+    pub fn build<R: io::Read>(&self, rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
+        self.build_with_buffer(rdr, vec![0; 8 * (1 << 10)]).unwrap()
     }
 
     /// Build a new decoder that wraps the given reader and uses the given
@@ -161,20 +158,19 @@ impl DecodeReaderBytesBuilder {
             );
             return Err(io::Error::new(io::ErrorKind::Other, msg));
         }
-        let encoding = self.encoding
-            .map(|enc| enc.new_decoder_with_bom_removal());
+        let encoding =
+            self.encoding.map(|enc| enc.new_decoder_with_bom_removal());
 
         // No need to do BOM detection if we opt out of it or have an explicit
         // encoding.
         let has_detected =
             !self.bom_sniffing || (!self.bom_override && encoding.is_some());
 
-        let peeker =
-            if self.strip_bom {
-                BomPeeker::without_bom(rdr)
-            } else {
-                BomPeeker::with_bom(rdr)
-            };
+        let peeker = if self.strip_bom {
+            BomPeeker::without_bom(rdr)
+        } else {
+            BomPeeker::with_bom(rdr)
+        };
         Ok(DecodeReaderBytes {
             rdr: peeker,
             decoder: encoding,
@@ -293,10 +289,7 @@ impl DecodeReaderBytesBuilder {
     ///     Ok(())
     /// }
     /// ```
-    pub fn strip_bom(
-        &mut self,
-        yes: bool,
-    ) -> &mut DecodeReaderBytesBuilder {
+    pub fn strip_bom(&mut self, yes: bool) -> &mut DecodeReaderBytesBuilder {
         self.strip_bom = yes;
         self
     }
@@ -449,10 +442,8 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
             return self.tiny_transcode(buf);
         }
         loop {
-            let (_, nin, nout, _) = self.decoder
-                .as_mut()
-                .unwrap()
-                .decode_to_utf8(
+            let (_, nin, nout, _) =
+                self.decoder.as_mut().unwrap().decode_to_utf8(
                     &self.buf.as_mut()[self.pos..self.buflen],
                     buf,
                     false,
@@ -468,7 +459,8 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
             self.fill()?;
             // ... but quit on EOF.
             if self.buflen == 0 {
-                let (_, _, nout, _) = self.decoder
+                let (_, _, nout, _) = self
+                    .decoder
                     .as_mut()
                     .unwrap()
                     .decode_to_utf8(&[], buf, true);
@@ -604,7 +596,7 @@ mod tests {
     #[test]
     fn trans_utf16_bom() {
         let srcbuf = vec![0xFF, 0xFE];
-        let mut dstbuf = vec![0; 8 * (1<<10)];
+        let mut dstbuf = vec![0; 8 * (1 << 10)];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         let n = rdr.read(&mut dstbuf).unwrap();
         assert_eq!(&*srcbuf, &dstbuf[..n]);
@@ -642,15 +634,13 @@ mod tests {
     #[test]
     fn trans_utf16_basic_without_bom() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
-        let mut rdr = DecodeReaderBytesBuilder::new()
-            .strip_bom(true)
-            .build(&*srcbuf);
+        let mut rdr =
+            DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
-        let mut rdr = DecodeReaderBytesBuilder::new()
-            .strip_bom(true)
-            .build(&*srcbuf);
+        let mut rdr =
+            DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
     }
 
@@ -700,6 +690,7 @@ mod tests {
     // Test transcoding with a minimal buffer but a large caller buffer.
     #[test]
     fn trans_utf16_minimal_buffer_normal_caller_buffer() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -746,6 +737,7 @@ mod tests {
     // Test transcoding with using byte oriented APIs.
     #[test]
     fn trans_utf16_byte_api() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -764,6 +756,7 @@ mod tests {
 
     #[test]
     fn trans_utf16_no_sniffing() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -777,6 +770,7 @@ mod tests {
 
     #[test]
     fn trans_utf16_no_sniffing_strip_bom() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -791,6 +785,7 @@ mod tests {
 
     #[test]
     fn trans_utf16_no_sniffing_encoding_override() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -805,6 +800,7 @@ mod tests {
 
     #[test]
     fn trans_utf16_no_sniffing_encoding_override_strip_bom() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -821,6 +817,7 @@ mod tests {
     // Test transcoding with a minimal buffer using byte oriented APIs.
     #[test]
     fn trans_utf16_minimal_buffer_byte_api() {
+        #[rustfmt::skip]
         let srcbuf = vec![
             0xFF, 0xFE,
             0x61, 0x00,
@@ -858,7 +855,7 @@ mod tests {
                     .build(&*srcbuf);
                 assert_eq!($dst, read_to_string(&mut rdr));
             }
-        }
+        };
     }
 
     // This isn't exhaustive obviously, but it lets us test base level support.
@@ -869,7 +866,11 @@ mod tests {
     test_trans_simple!(trans_simple_chinese, "chinese", b"\xA7\xA8", "Ж");
     test_trans_simple!(trans_simple_korean, "korean", b"\xAC\xA8", "Ж");
     test_trans_simple!(
-        trans_simple_big5_hkscs, "big5-hkscs", b"\xC7\xFA", "Ж");
+        trans_simple_big5_hkscs,
+        "big5-hkscs",
+        b"\xC7\xFA",
+        "Ж"
+    );
     test_trans_simple!(trans_simple_gbk, "gbk", b"\xA7\xA8", "Ж");
     test_trans_simple!(trans_simple_sjis, "sjis", b"\x84\x47", "Ж");
     test_trans_simple!(trans_simple_eucjp, "euc-jp", b"\xA7\xA8", "Ж");
