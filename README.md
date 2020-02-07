@@ -5,8 +5,7 @@ This crate provides streaming adapters for the
 crate. Adapters implement the standard library I/O traits and provide streaming
 transcoding support.
 
-[![Linux build status](https://api.travis-ci.org/BurntSushi/encoding_rs_io.svg)](https://travis-ci.org/BurntSushi/encoding_rs_io)
-[![Windows build status](https://ci.appveyor.com/api/projects/status/github/BurntSushi/encoding_rs_io?svg=true)](https://ci.appveyor.com/project/BurntSushi/encoding_rs_io)
+[![Build status](https://github.com/BurntSushi/encoding_rs_io/workflows/ci/badge.svg)](https://github.com/BurntSushi/encoding_rs_io/actions)
 [![](http://meritbadge.herokuapp.com/encoding_rs_io)](https://crates.io/crates/encoding_rs_io)
 
 
