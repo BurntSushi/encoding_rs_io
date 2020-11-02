@@ -21,10 +21,6 @@ jobs:
         - win-msvc
         - win-gnu
         include:
-        - build: pinned
-          os: ubuntu-18.04
-          rust: 1.39.0
-        - build: stable
           os: ubuntu-18.04
           rust: stable
         - build: beta
