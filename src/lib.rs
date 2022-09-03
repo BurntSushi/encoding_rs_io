@@ -591,34 +591,6 @@ mod tests {
         s
     }
 
-    // In cases where all we have is a bom, we expect the bytes to be
-    // passed through unchanged.
-    #[test]
-    fn trans_utf16_bom() {
-        let srcbuf = vec![0xFF, 0xFE];
-        let mut dstbuf = vec![0; 8 * (1 << 10)];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-
-        let srcbuf = vec![0xFE, 0xFF];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-
-        let srcbuf = vec![0xEF, 0xBB, 0xBF];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(n, 0);
-
-        let srcbuf = vec![0xEF, 0xBB, 0xBF];
-        let mut rdr = DecodeReaderBytesBuilder::new()
-            .utf8_passthru(true)
-            .build(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-    }
-
     // Test basic UTF-16 decoding.
     #[test]
     fn trans_utf16_basic() {
