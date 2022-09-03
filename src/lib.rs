@@ -410,6 +410,15 @@ impl<R: io::Read> DecodeReaderBytes<R, Vec<u8>> {
     pub fn new(rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
         DecodeReaderBytesBuilder::new().build(rdr)
     }
+
+    /// Return the encoding used by this decoder, which may have been
+    /// detected automatically or set manually.
+    ///
+    /// If automatic encoding detection is being used, the return value
+    /// of this method can change during the life of the decoder.
+    pub fn encoding(&self) -> Option<&'static Encoding> {
+        self.decoder.as_ref().map(|d| d.encoding())
+    }
 }
 
 impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
@@ -597,10 +606,12 @@ mod tests {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16BE), rdr.encoding());
     }
 
     #[test]
@@ -609,11 +620,13 @@ mod tests {
         let mut rdr =
             DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr =
             DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16BE), rdr.encoding());
     }
 
     // Test the BOM override.
@@ -625,9 +638,11 @@ mod tests {
             .encoding(Some(encoding_rs::UTF_8))
             .build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        // BOM should override the manually-set encoding
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
-    // Test basic UTF-16 decoding with a small  buffer.
+    // Test basic UTF-16 decoding with a small buffer.
     #[test]
     fn trans_utf16_smallbuf() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00, 0x62, 0x00, 0x63, 0x00];
@@ -648,6 +663,8 @@ mod tests {
 
         let nread = rdr.read(&mut tmp).unwrap();
         assert_eq!(nread, 0);
+
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test incomplete UTF-16 decoding. This ensures we see a replacement char
@@ -657,6 +674,7 @@ mod tests {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00, 0x00];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a\u{FFFD}", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with a minimal buffer but a large caller buffer.
@@ -679,6 +697,7 @@ mod tests {
             .unwrap();
         let got = read_to_string(&mut rdr);
         assert_eq!(got, "abcdefgh");
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with a minimal buffer and a minimal caller buffer.
@@ -704,6 +723,8 @@ mod tests {
 
         let nread = rdr.read(&mut tmp).unwrap();
         assert_eq!(nread, 0);
+
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with using byte oriented APIs.
