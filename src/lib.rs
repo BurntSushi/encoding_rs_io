@@ -158,13 +158,13 @@ impl DecodeReaderBytesBuilder {
             );
             return Err(io::Error::new(io::ErrorKind::Other, msg));
         }
-        let encoding =
+        let decoder =
             self.encoding.map(|enc| enc.new_decoder_with_bom_removal());
 
         // No need to do BOM detection if we opt out of it or have an explicit
         // encoding.
         let has_detected =
-            !self.bom_sniffing || (!self.bom_override && encoding.is_some());
+            !self.bom_sniffing || (!self.bom_override && decoder.is_some());
 
         let peeker = if self.strip_bom {
             BomPeeker::without_bom(rdr)
@@ -173,7 +173,7 @@ impl DecodeReaderBytesBuilder {
         };
         Ok(DecodeReaderBytes {
             rdr: peeker,
-            decoder: encoding,
+            decoder: decoder,
             tiny: TinyTranscoder::new(),
             utf8_passthru: self.utf8_passthru,
             buf: buffer,
