@@ -137,7 +137,7 @@ impl<R: io::Read> BomPeeker<R> {
         }
         // If the underlying reader fails or panics, make sure we set at least
         // an empty BOM so that we don't end up here again..
-        self.bom = Some(PossibleBom::new());
+        self.bom = Some(PossibleBom::new_empty());
 
         // OK, try to read the BOM.
         let mut buf = [0u8; 3];
@@ -184,7 +184,7 @@ pub struct PossibleBom {
 
 impl PossibleBom {
     /// Build a new empty BOM.
-    fn new() -> PossibleBom {
+    fn new_empty() -> PossibleBom {
         PossibleBom { bytes: [0; 3], len: 0 }
     }
 
@@ -321,7 +321,7 @@ mod tests {
     fn peeker_empty() {
         let buf = [];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
-        assert_eq!(PossibleBom::new(), peeker.peek_bom().unwrap());
+        assert_eq!(PossibleBom::new_empty(), peeker.peek_bom().unwrap());
 
         let mut tmp = [0; 100];
         assert_eq!(0, peeker.read(&mut tmp).unwrap());
