@@ -6,7 +6,7 @@ crate. Adapters implement the standard library I/O traits and provide streaming
 transcoding support.
 
 [![Build status](https://github.com/BurntSushi/encoding_rs_io/workflows/ci/badge.svg)](https://github.com/BurntSushi/encoding_rs_io/actions)
-[![](http://meritbadge.herokuapp.com/encoding_rs_io)](https://crates.io/crates/encoding_rs_io)
+[![crates.io](https://img.shields.io/crates/v/encoding_rs_io.svg)](https://crates.io/crates/encoding_rs_io)
 
 
 ### Documentation
@@ -116,8 +116,8 @@ something with a larger scope. But first, we must learn.
 This project is licensed under either of
 
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
+   https://www.apache.org/licenses/LICENSE-2.0)
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
+   https://opensource.org/licenses/MIT)
 
 at your option.
