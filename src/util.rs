@@ -137,7 +137,7 @@ impl<R: io::Read> BomPeeker<R> {
         }
         // If the underlying reader fails or panics, make sure we set at least
         // an empty BOM so that we don't end up here again..
-        self.bom = Some(PossibleBom::new());
+        self.bom = Some(PossibleBom::new_empty());
 
         // OK, try to read the BOM.
         let mut buf = [0u8; 3];
@@ -184,7 +184,7 @@ pub struct PossibleBom {
 
 impl PossibleBom {
     /// Build a new empty BOM.
-    fn new() -> PossibleBom {
+    fn new_empty() -> PossibleBom {
         PossibleBom { bytes: [0; 3], len: 0 }
     }
 
@@ -209,9 +209,6 @@ impl PossibleBom {
     /// encoding. Otherwise, return `None`.
     pub fn encoding(&self) -> Option<&'static Encoding> {
         let bom = self.as_slice(true);
-        if bom.len() < 3 {
-            return None;
-        }
         if let Some((enc, _)) = Encoding::for_bom(bom) {
             return Some(enc);
         }
@@ -245,7 +242,7 @@ pub fn read_full<R: io::Read>(
 #[cfg(test)]
 mod tests {
     use super::{BomPeeker, PossibleBom, TinyTranscoder};
-    use encoding_rs::Encoding;
+    use encoding_rs::{self, Encoding};
     use std::io::Read;
 
     #[test]
@@ -324,7 +321,7 @@ mod tests {
     fn peeker_empty() {
         let buf = [];
         let mut peeker = BomPeeker::with_bom(&buf[..]);
-        assert_eq!(PossibleBom::new(), peeker.peek_bom().unwrap());
+        assert_eq!(PossibleBom::new_empty(), peeker.peek_bom().unwrap());
 
         let mut tmp = [0; 100];
         assert_eq!(0, peeker.read(&mut tmp).unwrap());
@@ -447,5 +444,17 @@ mod tests {
         assert_eq!(1, peeker.read(&mut tmp).unwrap());
         assert_eq!(4, tmp[0]);
         assert_eq!(0, peeker.read(&mut tmp).unwrap());
+    }
+
+    #[test]
+    fn bom_recognition() {
+        let utf8_bom = PossibleBom { bytes: [0xEF, 0xBB, 0xBF], len: 3 };
+        assert_eq!(utf8_bom.encoding(), Some(encoding_rs::UTF_8));
+
+        let utf16be_bom = PossibleBom { bytes: [0xFE, 0xFF, 0], len: 2 };
+        assert_eq!(utf16be_bom.encoding(), Some(encoding_rs::UTF_16BE));
+
+        let utf16le_bom = PossibleBom { bytes: [0xFF, 0xFE, 0], len: 2 };
+        assert_eq!(utf16le_bom.encoding(), Some(encoding_rs::UTF_16LE));
     }
 }
