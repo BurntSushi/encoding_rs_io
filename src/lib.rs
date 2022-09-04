@@ -132,7 +132,8 @@ impl DecodeReaderBytesBuilder {
         }
     }
 
-    /// Build a new decoder that wraps the given reader.
+    /// Build a new decoder that wraps the given reader. The default buffer
+    /// size is 8kb.
     pub fn build<R: io::Read>(&self, rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
         self.build_with_buffer(rdr, vec![0; 8 * (1 << 10)]).unwrap()
     }
@@ -352,6 +353,13 @@ impl DecodeReaderBytesBuilder {
 /// buffer used to store the results of transcoding. Callers may elect to reuse
 /// the internal buffer via the `DecodeReaderBytesBuilder::build_with_buffer`
 /// constructor.
+///
+/// Because there is an internal buffer, the inner type `R` does not need to be
+/// buffered separately via `BufReader` - that is, you can wrap types such as
+/// `File` or `TcpStream` directly without concern about the inefficiency of
+/// repeated small reads. However, you may wish to wrap `DecodeReaderBytes`
+/// itself in a `BufReader` as some unnecessary overhead would be incurred
+/// when transcoding small quantities of data repeatedly.
 pub struct DecodeReaderBytes<R, B> {
     /// The underlying reader, wrapped in a peeker for reading a BOM if one
     /// exists.
@@ -367,12 +375,13 @@ pub struct DecodeReaderBytes<R, B> {
     /// the UTF-8 transcoder (which will replace invalid sequences with the
     /// REPLACEMENT CHARACTER).
     utf8_passthru: bool,
-    /// The internal buffer to store transcoded bytes before they are read by
-    /// callers.
+    /// The internal buffer to store raw (not-transcoded) bytes from the
+    /// underlying reader before they are processed.
     buf: B,
-    /// The current position in `buf`. Subsequent reads start here.
+    /// The current position in `buf`. Transcoding starts here.
     pos: usize,
-    /// The number of transcoded bytes in `buf`. Subsequent reads end here.
+    /// The number of raw bytes in `buf` from the current read pass of the
+    /// underlying reader. Transcoding ends here.
     buflen: usize,
     /// Whether BOM detection has been performed yet or not.
     has_detected: bool,
