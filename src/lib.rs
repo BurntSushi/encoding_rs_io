@@ -555,10 +555,7 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
                 self.buflen < self.buf.as_mut().len(),
                 "internal buffer should never be exhausted"
             );
-            let buf = self.buf.as_mut();
-            for (dst, src) in (self.pos..self.buflen).enumerate() {
-                buf[dst] = buf[src];
-            }
+            self.buf.as_mut().copy_within(self.pos..self.buflen, 0);
             self.buflen -= self.pos;
         } else {
             self.buflen = 0;
