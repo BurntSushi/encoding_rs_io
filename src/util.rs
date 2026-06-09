@@ -163,10 +163,9 @@ impl<R: io::Read> io::Read for BomPeeker<R> {
                 self.bom_pos += len;
                 return Ok(len);
             }
+            self.bom_pos = 3;
         }
-        let nread = self.rdr.read(buf)?;
-        self.bom_pos += nread;
-        Ok(nread)
+        self.rdr.read(buf)
     }
 }
 
