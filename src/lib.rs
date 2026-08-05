@@ -410,6 +410,14 @@ impl<R: io::Read> DecodeReaderBytes<R, Vec<u8>> {
     pub fn new(rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
         DecodeReaderBytesBuilder::new().build(rdr)
     }
+
+    /// Unwraps this `DecoderReaderBytes`, returning the underlying reader.
+    ///
+    /// Note that any leftover data in the internal buffer is lost. Therefore,
+    /// a following read from the underlying reader may lead to data loss.
+    pub fn into_inner(self) -> R {
+        self.rdr.into_inner()
+    }
 }
 
 impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
@@ -617,6 +625,19 @@ mod tests {
             .build(&*srcbuf);
         let n = rdr.read(&mut dstbuf).unwrap();
         assert_eq!(&*srcbuf, &dstbuf[..n]);
+    }
+
+    #[test]
+    fn trans_utf16_basic_with_seek() {
+        use std::io::{Seek, SeekFrom};
+        let src = std::io::Cursor::new(vec![0xFF, 0xFE, 0x61, 0x00]);
+        let mut rdr = DecodeReaderBytes::new(src);
+        assert_eq!("a", read_to_string(&mut rdr));
+
+        let mut inner_rdr = rdr.into_inner();
+        inner_rdr.seek(SeekFrom::Start(0)).unwrap();
+        rdr = DecodeReaderBytes::new(inner_rdr);
+        assert_eq!("a", read_to_string(&mut rdr));
     }
 
     // Test basic UTF-16 decoding.

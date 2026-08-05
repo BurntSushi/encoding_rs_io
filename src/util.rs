@@ -145,6 +145,10 @@ impl<R: io::Read> BomPeeker<R> {
         self.bom = Some(PossibleBom { bytes: buf, len: bom_len });
         Ok(self.bom.unwrap())
     }
+
+    pub fn into_inner(self) -> R {
+        self.rdr
+    }
 }
 
 impl<R: io::Read> io::Read for BomPeeker<R> {
