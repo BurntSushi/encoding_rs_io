@@ -132,7 +132,8 @@ impl DecodeReaderBytesBuilder {
         }
     }
 
-    /// Build a new decoder that wraps the given reader.
+    /// Build a new decoder that wraps the given reader. The default buffer
+    /// size is 8kb.
     pub fn build<R: io::Read>(&self, rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
         self.build_with_buffer(rdr, vec![0; 8 * (1 << 10)]).unwrap()
     }
@@ -158,13 +159,13 @@ impl DecodeReaderBytesBuilder {
             );
             return Err(io::Error::new(io::ErrorKind::Other, msg));
         }
-        let encoding =
+        let decoder =
             self.encoding.map(|enc| enc.new_decoder_with_bom_removal());
 
         // No need to do BOM detection if we opt out of it or have an explicit
         // encoding.
         let has_detected =
-            !self.bom_sniffing || (!self.bom_override && encoding.is_some());
+            !self.bom_sniffing || (!self.bom_override && decoder.is_some());
 
         let peeker = if self.strip_bom {
             BomPeeker::without_bom(rdr)
@@ -173,7 +174,7 @@ impl DecodeReaderBytesBuilder {
         };
         Ok(DecodeReaderBytes {
             rdr: peeker,
-            decoder: encoding,
+            decoder: decoder,
             tiny: TinyTranscoder::new(),
             utf8_passthru: self.utf8_passthru,
             buf: buffer,
@@ -352,6 +353,13 @@ impl DecodeReaderBytesBuilder {
 /// buffer used to store the results of transcoding. Callers may elect to reuse
 /// the internal buffer via the `DecodeReaderBytesBuilder::build_with_buffer`
 /// constructor.
+///
+/// Because there is an internal buffer, the inner type `R` does not need to be
+/// buffered separately via `BufReader` - that is, you can wrap types such as
+/// `File` or `TcpStream` directly without concern about the inefficiency of
+/// repeated small reads. However, you may wish to wrap `DecodeReaderBytes`
+/// itself in a `BufReader` as some unnecessary overhead would be incurred
+/// when transcoding small quantities of data repeatedly.
 pub struct DecodeReaderBytes<R, B> {
     /// The underlying reader, wrapped in a peeker for reading a BOM if one
     /// exists.
@@ -367,12 +375,13 @@ pub struct DecodeReaderBytes<R, B> {
     /// the UTF-8 transcoder (which will replace invalid sequences with the
     /// REPLACEMENT CHARACTER).
     utf8_passthru: bool,
-    /// The internal buffer to store transcoded bytes before they are read by
-    /// callers.
+    /// The internal buffer to store raw (not-transcoded) bytes from the
+    /// underlying reader before they are processed.
     buf: B,
-    /// The current position in `buf`. Subsequent reads start here.
+    /// The current position in `buf`. Transcoding starts here.
     pos: usize,
-    /// The number of transcoded bytes in `buf`. Subsequent reads end here.
+    /// The number of raw bytes in `buf` from the current read pass of the
+    /// underlying reader. Transcoding ends here.
     buflen: usize,
     /// Whether BOM detection has been performed yet or not.
     has_detected: bool,
@@ -409,6 +418,15 @@ impl<R: io::Read> DecodeReaderBytes<R, Vec<u8>> {
     /// builder), the underlying bytes are passed through as-is.
     pub fn new(rdr: R) -> DecodeReaderBytes<R, Vec<u8>> {
         DecodeReaderBytesBuilder::new().build(rdr)
+    }
+
+    /// Return the encoding used by this decoder, which may have been
+    /// detected automatically or set manually.
+    ///
+    /// If automatic encoding detection is being used, the return value
+    /// of this method can change during the life of the decoder.
+    pub fn encoding(&self) -> Option<&'static Encoding> {
+        self.decoder.as_ref().map(|d| d.encoding())
     }
 }
 
@@ -537,10 +555,7 @@ impl<R: io::Read, B: AsMut<[u8]>> DecodeReaderBytes<R, B> {
                 self.buflen < self.buf.as_mut().len(),
                 "internal buffer should never be exhausted"
             );
-            let buf = self.buf.as_mut();
-            for (dst, src) in (self.pos..self.buflen).enumerate() {
-                buf[dst] = buf[src];
-            }
+            self.buf.as_mut().copy_within(self.pos..self.buflen, 0);
             self.buflen -= self.pos;
         } else {
             self.buflen = 0;
@@ -591,44 +606,18 @@ mod tests {
         s
     }
 
-    // In cases where all we have is a bom, we expect the bytes to be
-    // passed through unchanged.
-    #[test]
-    fn trans_utf16_bom() {
-        let srcbuf = vec![0xFF, 0xFE];
-        let mut dstbuf = vec![0; 8 * (1 << 10)];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-
-        let srcbuf = vec![0xFE, 0xFF];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-
-        let srcbuf = vec![0xEF, 0xBB, 0xBF];
-        let mut rdr = DecodeReaderBytes::new(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(n, 0);
-
-        let srcbuf = vec![0xEF, 0xBB, 0xBF];
-        let mut rdr = DecodeReaderBytesBuilder::new()
-            .utf8_passthru(true)
-            .build(&*srcbuf);
-        let n = rdr.read(&mut dstbuf).unwrap();
-        assert_eq!(&*srcbuf, &dstbuf[..n]);
-    }
-
     // Test basic UTF-16 decoding.
     #[test]
     fn trans_utf16_basic() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16BE), rdr.encoding());
     }
 
     #[test]
@@ -637,11 +626,13 @@ mod tests {
         let mut rdr =
             DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
 
         let srcbuf = vec![0xFE, 0xFF, 0x00, 0x61];
         let mut rdr =
             DecodeReaderBytesBuilder::new().strip_bom(true).build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16BE), rdr.encoding());
     }
 
     // Test the BOM override.
@@ -653,9 +644,11 @@ mod tests {
             .encoding(Some(encoding_rs::UTF_8))
             .build(&*srcbuf);
         assert_eq!("a", read_to_string(&mut rdr));
+        // BOM should override the manually-set encoding
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
-    // Test basic UTF-16 decoding with a small  buffer.
+    // Test basic UTF-16 decoding with a small buffer.
     #[test]
     fn trans_utf16_smallbuf() {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00, 0x62, 0x00, 0x63, 0x00];
@@ -676,6 +669,8 @@ mod tests {
 
         let nread = rdr.read(&mut tmp).unwrap();
         assert_eq!(nread, 0);
+
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test incomplete UTF-16 decoding. This ensures we see a replacement char
@@ -685,6 +680,7 @@ mod tests {
         let srcbuf = vec![0xFF, 0xFE, 0x61, 0x00, 0x00];
         let mut rdr = DecodeReaderBytes::new(&*srcbuf);
         assert_eq!("a\u{FFFD}", read_to_string(&mut rdr));
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with a minimal buffer but a large caller buffer.
@@ -707,6 +703,7 @@ mod tests {
             .unwrap();
         let got = read_to_string(&mut rdr);
         assert_eq!(got, "abcdefgh");
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with a minimal buffer and a minimal caller buffer.
@@ -732,6 +729,8 @@ mod tests {
 
         let nread = rdr.read(&mut tmp).unwrap();
         assert_eq!(nread, 0);
+
+        assert_eq!(Some(encoding_rs::UTF_16LE), rdr.encoding());
     }
 
     // Test transcoding with using byte oriented APIs.
