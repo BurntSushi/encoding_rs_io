@@ -9,11 +9,7 @@ readme = "README.md"
 keywords = ["encoding", "transcoding", "stream", "io", "read"]
 license = "MIT OR Apache-2.0"
 categories = ["text-processing", "encoding", "web-programming", "email"]
-exclude = ["/ci/*", "/.travis.yml", "/appveyor.yml"]
-
-[badges]
-travis-ci = { repository = "BurntSushi/encoding_rs_io" }
-appveyor = { repository = "BurntSushi/encoding_rs_io" }
+exclude = ["/ci/*"]
 
 [lib]
 bench = false
